@@ -1,0 +1,127 @@
+---
+title: "Défi2 - données environnementales"
+author: "Philéas Condemine"
+date: "25/11/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Packages 
+
+```{r packages, message=FALSE, warning=FALSE}
+library(plotly)
+library(data.table)
+library(readxl)
+library(lubridate)
+library(glmnet)
+library(gbm)
+library(xgboost)
+library(dplyr)
+library(TSdist)
+library(FNN)
+library(leaflet)
+library(fasttime)
+library(pbapply)
+# library(reticulate)
+setDTthreads(3L)
+```
+
+```{r}
+GainAUC = function(y_pred, y_obs){
+  dt = data.table(y_pred=y_pred,y_obs=y_obs)
+  setorder(dt,-y_pred)
+  dt$prop_pred = 1:nrow(dt)/nrow(dt)
+  dt[,prop_obs := cumsum(y_obs)/sum(y_obs)]
+  # ggplot(dt,aes(x=prop_pred,y=prop_obs))+geom_line()
+  mean(dt$prop_obs)
+}
+
+Normalized_GainAUC = function(y_pred, y_obs){
+  GainAUC(y_pred, y_obs)/GainAUC(y_obs, y_obs)
+}
+```
+
+https://bgreenwell.github.io/pdp/articles/pdp-example-xgboost.html
+
+## Stat pour app
+
+```{r stat pour app, eval=F}
+rpu = fread("data/prepared/dataset.csv")
+setnames(rpu,c("date_entree"),c("date"))
+rpu[,date:=as.Date(date)]
+rpu[,weekday := weekdays(date)]
+rpu[,year := year(date)]
+rpu = rpu[!is.na(nb)]
+train_years = c(2016,2017)
+moyenne_de_saison_tot = rpu[year(date)%in%train_years,.(nb=sum(nb)),by=.(finess,date)][,.(nb = mean(nb)),by=.(month(date),weekdays(date),finess)]
+setnames(moyenne_de_saison_tot,"weekdays","weekday")
+moyenne_de_saison_mode_sortie_age = rpu[year(date)%in%train_years,.(nb=sum(nb)),by=.(finess,date,categorie_age)][,.(nb = mean(nb)),by=.(month(date),weekdays(date),finess,categorie_age)]
+setnames(moyenne_de_saison_mode_sortie_age,"weekdays","weekday")
+gtrends = fread("data/prepared/gtrends.csv")
+vars_gtrends = unique(gtrends$keywork)
+vars_gtrends = vars_gtrends[vars_gtrends%in%names(rpu)]
+save(vars_gtrends,file = "data/vars_gtrends.RData")
+moyenne_de_saison_external = rpu[,.(temp_min = mean(t_min,na.rm=T),
+                                     temp_max = mean(t_max,na.rm=T), 
+                                     # rhinopharyngite = mean(rhinopharyngite,na.rm=T),
+                                     NO2 = mean(no2,na.rm=T),
+                                     O3 = mean(o3,na.rm=T),
+                                     PM10 = mean(pm10,na.rm=T)),
+                                  by=.(week(date),finess)]
+moyenne_de_saison_gtrends = rpu[,lapply(.SD,mean,na.rm=T),
+                                 by=.(week(date),finess),.SDcols=vars_gtrends]
+nrow(moyenne_de_saison_gtrends)
+nrow(moyenne_de_saison_external)
+
+moyenne_de_saison_external = merge(moyenne_de_saison_external,moyenne_de_saison_gtrends,by=c("week","finess"))
+
+save(moyenne_de_saison_tot,moyenne_de_saison_mode_sortie_age,moyenne_de_saison_external,file = "data/prepared/moyennes_de_saison.RData")
+```
+
+## IML
+
+```{r}
+library(pdp)      # for partial dependence plots (PDPs)
+library(vip)      # for variable importance plots (VIPs)
+```
+
+
+```{r}
+var_imp = xgb.importance(model = bst)
+vip(bst, num_features = 30)%>%ggplotly  # 10 is the default
+```
+
+
+```{r}
+
+load("data/varexp.RData")
+load("data/prepared/test.RData")
+x <- data.matrix(test[sample(nrow(test),1000),vars_explicatives,with=F])  # training features
+p1 <- partial(bst, pred.var = var_imp$Feature[1], ice = TRUE, center = TRUE, 
+              plot = TRUE, rug = TRUE, alpha = 0.1, plot.engine = "ggplot2", 
+              train = x)
+p1%>%ggplotly
+
+p2 <- partial(bst, pred.var = "o3_max_7J", ice = TRUE, center = TRUE, 
+              plot = TRUE, rug = TRUE, alpha = 0.1, plot.engine = "ggplot2",
+              train = x)
+p2%>%ggplotly
+
+
+p3 <- partial(bst, pred.var = c("t_max","doliprane"),
+              plot = TRUE, chull = TRUE, plot.engine = "ggplot2", train = x)
+p3%>%ggplotly
+```
+
+
+
+
+
+
+
+
+
+
